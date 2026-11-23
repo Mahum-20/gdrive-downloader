@@ -1,0 +1,24 @@
+# Authentication & sensitive files
+cookies.txt
+cookies.json
+*.cookies
+*.cookie
+
+# Downloaded files & partial downloads
+*.mp4
+*.mkv
+*.part*
+*.webm
+
+# Python environment & cache
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+.env
+
+# OS metadata
+.DS_Store
+Thumbs.db
