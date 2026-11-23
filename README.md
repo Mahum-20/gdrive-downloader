@@ -50,14 +50,27 @@ python downloader.py 1A2B3C4D5E...
 python downloader.py "<LINK_OR_ID>" -o "lecture_1.mp4" -d "./videos"
 ```
 
-### 3. Adjust Concurrency & Buffer Size
+### 3. Select Video Quality
+By default, the tool automatically selects the **highest available quality** (`best`).
+
+List available resolutions for a video:
+```bash
+python downloader.py "<LINK_OR_ID>" --cookies "cookies.txt" -F
+```
+
+Specify a desired resolution (e.g. `720p`, `1080p`, `480p`, `360p`):
+```bash
+python downloader.py "<LINK_OR_ID>" --cookies "cookies.txt" -q 720p
+```
+
+### 4. Adjust Concurrency & Buffer Size
 Increase threads (up to 16) and buffer size (in KB):
 
 ```bash
 python downloader.py "<LINK_OR_ID>" -t 8 -c 512
 ```
 
-### 4. Restricted & View-Only Videos (Using Cookies)
+### 5. Restricted & View-Only Videos (Using Cookies)
 For videos where download is disabled ("view-only") or restricted to specific accounts:
 1. Open the video in your web browser where you are signed in and can play it.
 2. Export cookies using a browser extension (such as *Get cookies.txt LOCALLY* or *Cookie-Editor*).
@@ -75,6 +88,8 @@ python downloader.py "<LINK_OR_ID>" --cookies "cookies.txt"
 | Argument | Description | Default |
 |---|---|---|
 | `url_or_id` | Google Drive link or File ID | *(Required)* |
+| `-q`, `--quality` | Desired quality (`best`, `1080p`, `720p`, `480p`, `360p`) | `best` |
+| `-F`, `--list-formats` | List available video formats/resolutions and exit | Disabled |
 | `-o`, `--output` | Custom output filename | Auto-detected from Drive |
 | `-d`, `--dir` | Destination directory | `.` (Current directory) |
 | `-t`, `--threads` | Number of worker threads (1–16) | `4` |

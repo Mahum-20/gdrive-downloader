@@ -108,10 +108,10 @@ def load_cookies(filepath: str, session: requests.Session, verbose: bool = False
         print(f"[!] Error loading cookies from {filepath}: {e}", file=sys.stderr)
 
 
-def get_video_info(session: requests.Session, file_id: str, verbose: bool = False):
+def get_video_info_and_streams(session: requests.Session, file_id: str, verbose: bool = False):
     """
-    Retrieves video metadata and direct playback stream URL from Google Drive.
-    Falls back to the standard download endpoint if get_video_info doesn't return streams.
+    Retrieves video metadata and all direct playback streams from Google Drive,
+    sorted by quality (highest resolution first).
     """
     info_url = f"https://drive.google.com/u/0/get_video_info?docid={file_id}&drive_originator_app=303"
     headers = {
@@ -119,6 +119,9 @@ def get_video_info(session: requests.Session, file_id: str, verbose: bool = Fals
         "Accept": "*/*",
         "Referer": f"https://drive.google.com/file/d/{file_id}/view"
     }
+
+    streams = []
+    title = None
 
     try:
         resp = session.get(info_url, headers=headers, timeout=15)
@@ -129,34 +132,76 @@ def get_video_info(session: requests.Session, file_id: str, verbose: bool = Fals
             if status != "fail":
                 title = parsed.get("title", [None])[0]
 
-                # Check fmt_stream_map or url_encoded_fmt_stream_map
-                stream_url = None
-                for key in ["url_encoded_fmt_stream_map", "fmt_stream_map"]:
-                    if key in parsed:
-                        streams = parsed[key][0].split(",")
-                        for s in streams:
-                            sub_params = urllib.parse.parse_qs(s)
-                            if "url" in sub_params:
-                                stream_url = sub_params["url"][0]
-                                break
-                    if stream_url:
-                        break
+                # 1. Parse player_response (contains exact resolutions and stream URLs)
+                if "player_response" in parsed:
+                    try:
+                        pr = json.loads(parsed["player_response"][0])
+                        streaming_data = pr.get("streamingData", {})
+                        for fmt in streaming_data.get("formats", []):
+                            if "url" in fmt:
+                                h = fmt.get("height", 0)
+                                w = fmt.get("width", 0)
+                                q_label = fmt.get("qualityLabel") or (f"{h}p" if h else "unknown")
+                                streams.append({
+                                    "itag": fmt.get("itag"),
+                                    "quality": q_label,
+                                    "height": h,
+                                    "width": w,
+                                    "mime": fmt.get("mimeType", "video/mp4"),
+                                    "url": fmt["url"]
+                                })
+                    except Exception as e:
+                        if verbose:
+                            print(f"[!] Error parsing player_response JSON: {e}")
 
-                # Some payloads include direct videoplayback in raw text
-                if not stream_url:
+                # 2. Check fmt_stream_map & fmt_list if player_response had no formats
+                if not streams:
+                    fmt_resolutions = {}
+                    if "fmt_list" in parsed:
+                        for item in parsed["fmt_list"][0].split(","):
+                            parts = item.split("/")
+                            if len(parts) >= 2:
+                                dims = parts[1].split("x")
+                                if len(dims) == 2 and dims[1].isdigit():
+                                    fmt_resolutions[parts[0]] = (int(dims[0]), int(dims[1]))
+
+                    for key in ["url_encoded_fmt_stream_map", "fmt_stream_map"]:
+                        if key in parsed:
+                            for s in parsed[key][0].split(","):
+                                sub_params = urllib.parse.parse_qs(s)
+                                if "url" in sub_params:
+                                    itag = sub_params.get("itag", [""])[0]
+                                    w, h = fmt_resolutions.get(itag, (0, 0))
+                                    q = f"{h}p" if h else sub_params.get("quality", ["unknown"])[0]
+                                    streams.append({
+                                        "itag": itag,
+                                        "quality": q,
+                                        "height": h,
+                                        "width": w,
+                                        "mime": sub_params.get("type", ["video/mp4"])[0],
+                                        "url": sub_params["url"][0]
+                                    })
+                            if streams:
+                                break
+
+                # 3. Direct videoplayback stream in raw text
+                if not streams:
                     for part in resp.text.split("&"):
                         if "videoplayback" in part:
                             key_val = part.split("=", 1)
                             if len(key_val) == 2:
                                 potential_url = urllib.parse.unquote(key_val[1])
                                 if potential_url.startswith("http"):
-                                    stream_url = potential_url
+                                    streams.append({
+                                        "itag": None,
+                                        "quality": "stream",
+                                        "height": 0,
+                                        "width": 0,
+                                        "mime": "video/mp4",
+                                        "url": potential_url
+                                    })
                                     break
-
-                if stream_url:
-                    return title or f"{file_id}.mp4", stream_url
-
-            if verbose:
+            elif verbose:
                 reason = parsed.get("reason", ["Unknown"])[0]
                 print(f"[*] get_video_info returned status={status}: {reason}")
     except Exception as e:
@@ -164,8 +209,20 @@ def get_video_info(session: requests.Session, file_id: str, verbose: bool = Fals
             print(f"[!] Error probing get_video_info: {e}")
 
     # Fallback to direct export download URL
-    fallback_url = f"https://drive.google.com/uc?export=download&id={file_id}"
-    return f"{file_id}.mp4", fallback_url
+    if not streams:
+        fallback_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        streams.append({
+            "itag": None,
+            "quality": "source/export",
+            "height": 0,
+            "width": 0,
+            "mime": "video/mp4",
+            "url": fallback_url
+        })
+
+    # Sort streams by resolution height descending (highest quality first)
+    streams.sort(key=lambda x: x.get("height", 0), reverse=True)
+    return title or f"{file_id}.mp4", streams
 
 
 def is_html_response(resp: requests.Response) -> bool:
@@ -324,6 +381,8 @@ def main():
     parser.add_argument("-d", "--dir", help="Output directory path", default=".")
     parser.add_argument("-t", "--threads", type=int, default=4, help="Number of download threads (1-16, default: 4)")
     parser.add_argument("-c", "--chunk-size", type=int, default=256, help="Chunk buffer size in KB (default: 256)")
+    parser.add_argument("-q", "--quality", default="best", help="Desired video quality (e.g. best, 1080p, 720p, 480p, 360p). Default: best")
+    parser.add_argument("-F", "--list-formats", action="store_true", help="List available video formats/resolutions and exit")
     parser.add_argument("--cookies", help="Path to cookies file (Netscape .txt or JSON)", default=None)
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose debug output")
 
@@ -350,7 +409,42 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     print(f"[*] Resolving video stream metadata...")
-    title, stream_url = get_video_info(session, file_id, verbose=args.verbose)
+    title, streams = get_video_info_and_streams(session, file_id, verbose=args.verbose)
+
+    # Handle format listing flag
+    if args.list_formats:
+        print(f"\nAvailable formats for '{title}':")
+        print(f"{'Quality':<12} {'Resolution':<14} {'ITAG':<8} {'Format'}")
+        print("-" * 52)
+        for s in streams:
+            res = f"{s['width']}x{s['height']}" if s['height'] else "auto"
+            itag = str(s['itag']) if s['itag'] else "-"
+            mime = s['mime'].split(';')[0] if s['mime'] else "video/mp4"
+            print(f"{s['quality']:<12} {res:<14} {itag:<8} {mime}")
+        return
+
+    # Select desired stream
+    selected_stream = None
+    req_q = args.quality.lower().strip()
+
+    if req_q == "best":
+        selected_stream = streams[0]
+    else:
+        for s in streams:
+            q_label = str(s["quality"]).lower()
+            h_str = str(s["height"])
+            if req_q in (q_label, h_str, f"{h_str}p"):
+                selected_stream = s
+                break
+        if not selected_stream:
+            print(f"[!] Quality '{args.quality}' not found. Defaulting to best available ({streams[0]['quality']}).")
+            selected_stream = streams[0]
+
+    stream_url = selected_stream["url"]
+    q_display = selected_stream['quality']
+    if selected_stream['width'] and selected_stream['height']:
+        q_display += f" ({selected_stream['width']}x{selected_stream['height']})"
+    print(f"[*] Selected Quality: {q_display}")
 
     # Determine filename
     filename = args.output if args.output else title
