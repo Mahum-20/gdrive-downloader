@@ -2,14 +2,17 @@
 
 A lightweight, fast, multi-threaded, and resumable Google Drive video and file downloader written in Python.
 
+Supports public files, authenticated private files, and **view-only videos** (videos where the standard download/export button is disabled in the Google Drive web interface).
+
 ---
 
 ## Features
 
+- **View-Only Video Support**: Downloads Google Drive videos even when the owner has disabled download/export options in the web interface by resolving the media stream directly.
 - **Multi-threaded Downloads**: Splits files across multiple concurrent threads (1 to 16) with HTTP `Range` requests for maximum download speeds.
 - **Resumable Transfers**: If interrupted, it automatically detects existing bytes in `.part` files and resumes without restarting from zero.
 - **High-Throughput Buffer**: Uses optimized chunk buffers (default 256 KB) to prevent CPU bottlenecks on large media files.
-- **Session & Cookie Support**: Works with Netscape `cookies.txt` or JSON cookie dumps (for private/restricted drives).
+- **Session & Cookie Support**: Works with Netscape `cookies.txt` or JSON cookie dumps (for private, restricted, or view-only videos).
 - **Graceful Error Handling**: Captures `Ctrl+C` (KeyboardInterrupt) safely to preserve partial progress on disk.
 - **Cross-Platform**: Automatic filename sanitization for Windows and Linux.
 
@@ -54,11 +57,12 @@ Increase threads (up to 16) and buffer size (in KB):
 python downloader.py "<LINK_OR_ID>" -t 8 -c 512
 ```
 
-### 4. Authenticated / Restricted Files (Using Cookies)
-For files requiring login or organizational access:
-1. Export cookies from your browser using an extension (such as *Get cookies.txt LOCALLY* or *Cookie-Editor*).
-2. Save as `cookies.txt` (Netscape format) or `cookies.json`.
-3. Pass via `--cookies`:
+### 4. Restricted & View-Only Videos (Using Cookies)
+For videos where download is disabled ("view-only") or restricted to specific accounts:
+1. Open the video in your web browser where you are signed in and can play it.
+2. Export cookies using a browser extension (such as *Get cookies.txt LOCALLY* or *Cookie-Editor*).
+3. Save as `cookies.txt` (Netscape format) or `cookies.json`.
+4. Pass via `--cookies`:
 
 ```bash
 python downloader.py "<LINK_OR_ID>" --cookies "cookies.txt"
